@@ -337,9 +337,12 @@ public final class ClientCs {
         ViewModelRenderer.Loaded l = ViewModelRenderer.model(animModel);
         if (l == null) return null;
         MdlModel m = l.model();
+        if (m.sequences.isEmpty()) return null;
         if (animSeq < 0 || animSeq >= m.sequences.size()) {
             String idle = idleSeq();
-            if (idle == null || play(idle, true) <= 0 && animSeq < 0) animSeq = 0;
+            if (idle != null) play(idle, true);
+            // a custom v_ model from the player's CS install may have fewer sequences than the stock one
+            if (animSeq < 0 || animSeq >= m.sequences.size()) animSeq = 0;
         }
         MdlModel.Sequence s = m.sequences.get(animSeq);
         float frame = (float) ((now() - animStart) / 1000.0 * Math.max(1f, s.fps()));

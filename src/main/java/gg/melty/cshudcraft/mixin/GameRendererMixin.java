@@ -28,9 +28,19 @@ public abstract class GameRendererMixin {
         if (!KEEP_BOB && CsHudCraft.csActive()) ci.cancel();
     }
 
+    private static final boolean KEEP_FOV_EFFECTS = "1".equals(System.getenv("CSHUDCRAFT_KEEPFOV"));
+
+    /**
+     * CS keeps one field of view: while CS mode is on, sprinting and speed effects no longer widen it (the player's
+     * FOV setting stays as it is), and the scope zooms in from there.
+     */
     @Inject(method = "getFov", at = @At("RETURN"), cancellable = true)
     private void cshudcraft$zoom(Camera camera, float tickProgress, boolean changingFov, CallbackInfoReturnable<Float> cir) {
+        if (!changingFov) return;
+        float fov = cir.getReturnValue();
+        if (!KEEP_FOV_EFFECTS && CsHudCraft.csActive()) fov = MinecraftClient.getInstance().options.getFov().getValue();
         float z = ClientCs.zoomFov();
-        if (z > 0 && changingFov) cir.setReturnValue(Math.min(cir.getReturnValue(), z));
+        if (z > 0) fov = Math.min(fov, z);
+        cir.setReturnValue(fov);
     }
 }

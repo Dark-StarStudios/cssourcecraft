@@ -2,6 +2,7 @@ package gg.melty.cshudcraft;
 
 import gg.melty.cshudcraft.mdl.MdlModel;
 import gg.melty.cshudcraft.mdl.MdlPose;
+import gg.melty.cshudcraft.mixin.GameRendererInvoker;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.network.ClientPlayerEntity;
 import net.minecraft.client.render.OverlayTexture;
@@ -11,8 +12,12 @@ import net.minecraft.client.render.command.OrderedRenderCommandQueue;
 import net.minecraft.client.texture.NativeImage;
 import net.minecraft.client.texture.NativeImageBackedTexture;
 import net.minecraft.client.util.math.MatrixStack;
+import net.minecraft.entity.LivingEntity;
 import net.minecraft.util.Identifier;
 import net.minecraft.util.math.RotationAxis;
+import net.minecraft.world.GameMode;
+import org.joml.Matrix4f;
+import org.joml.Quaternionf;
 
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -29,6 +34,10 @@ public final class ViewModelRenderer {
     /** GoldSrc units to Minecraft view-space units. Only the near plane cares; perspective is unchanged. */
     static final float SCALE = 1f / 24f;
     static final boolean DEBUG = "1".equals(System.getenv("CSHUDCRAFT_VMDEBUG"));
+    /** CSHUDCRAFT_VMHAND=1: old behaviour, draw in the hand pass (does not show under Iris shaders). */
+    static final boolean LEGACY_HAND = "1".equals(System.getenv("CSHUDCRAFT_VMHAND"));
+    /** CSHUDCRAFT_VMLAYER: cutout (default) | eyes | emissive. Which render layer draws the model (Iris test). */
+    static final String LAYER_MODE = System.getenv().getOrDefault("CSHUDCRAFT_VMLAYER", "cutout");
 
     public record Loaded(MdlModel model, Identifier[] textures) {}
 
@@ -71,13 +80,57 @@ public final class ViewModelRenderer {
         }
     }
 
-    /** @return true when the CS viewmodel replaced Minecraft's hands this frame */
+    /**
+     * Hand-pass hook: the CS viewmodel replaces Minecraft's hands. Iris drops custom layers submitted in the hand pass,
+     * so the model is drawn in the world entity pass instead (renderInWorld), the same way the third-person weapon is.
+     * @return true when Minecraft's own hands must be skipped this frame
+     */
     public static boolean render(float tickProgress, MatrixStack matrices, OrderedRenderCommandQueue queue, ClientPlayerEntity player, int light) {
         if (!CsHudCraft.csActive()) return false;
+        if (LEGACY_HAND) draw(tickProgress, matrices, queue, null, null, 1f, light);
+        return true;
+    }
+
+    /** World entity pass: draws the viewmodel in camera space (orientation = camera rotation). */
+    public static void renderInWorld(MatrixStack matrices, OrderedRenderCommandQueue queue, Quaternionf orientation) {
+        if (LEGACY_HAND || orientation == null || !CsHudCraft.csActive()) return;
+        MinecraftClient mc = MinecraftClient.getInstance();
+        ClientPlayerEntity player = mc.player;
+        if (player == null || mc.interactionManager == null) return;
+        if (!mc.options.getPerspective().isFirstPerson() || mc.options.hudHidden) return;
+        if (mc.interactionManager.getCurrentGameMode() == GameMode.SPECTATOR) return;
+        if (mc.getCameraEntity() instanceof LivingEntity le && le.isSleeping()) return;
+        float tickProgress = mc.getRenderTickCounter().getTickProgress(true);
+        int light = mc.getEntityRenderDispatcher().getLight(player, tickProgress);
+        // the world pass bends the whole view (hurt tilt, walking bob) through the projection; cancel it so the
+        // viewmodel stays fixed in front of the eyes like it did in the hand pass
+        Matrix4f undo = new Matrix4f();
+        float fovScale = 1f;
+        try {
+            GameRendererInvoker inv = (GameRendererInvoker) (Object) mc.gameRenderer;
+            float camTick = mc.gameRenderer.getCamera().getLastTickProgress();
+            MatrixStack bob = new MatrixStack();
+            inv.cshudcraft$tiltViewWhenHurt(bob, camTick);
+            if (mc.options.getBobView().getValue()) inv.cshudcraft$bobView(bob, camTick);
+            bob.peek().getPositionMatrix().invert(undo);
+            // the world pass uses the "dynamic" fov (sprinting, speed effects, zoom), the old hand pass did not:
+            // stretch the model sideways by the ratio of the two projections so it stays where it was
+            float fovWorld = inv.cshudcraft$getFov(mc.gameRenderer.getCamera(), tickProgress, true);
+            float fovHand = inv.cshudcraft$getFov(mc.gameRenderer.getCamera(), tickProgress, false);
+            float k = (float) (Math.tan(Math.toRadians(fovWorld) / 2) / Math.tan(Math.toRadians(fovHand) / 2));
+            if (k > 0.2f && k < 5f) fovScale = k;
+        } catch (Exception e) {
+            undo.identity();
+            fovScale = 1f;
+        }
+        draw(tickProgress, matrices, queue, orientation, undo, fovScale, light);
+    }
+
+    private static void draw(float tickProgress, MatrixStack matrices, OrderedRenderCommandQueue queue, Quaternionf orientation, Matrix4f undoBob, float fovScale, int light) {
         ClientCs.Anim anim = ClientCs.viewAnim();
-        if (anim == null || ClientCs.scoped()) return true; // CS hides the weapon in the scope
+        if (anim == null || ClientCs.scoped()) return; // CS hides the weapon in the scope
         Loaded l = model(anim.model());
-        if (l == null) return true;
+        if (l == null) return;
         MdlModel m = l.model();
         float[][] bones = MdlPose.compute(m, anim.sequence(), anim.frame());
         float[] turn = ClientCs.boneInspect();
@@ -93,8 +146,13 @@ public final class ViewModelRenderer {
         }
 
         matrices.push();
-        if (!"keep".equals(System.getenv("CSHUDCRAFT_VMPOSE"))) {
-            // the hand pass hands us the inverse camera rotation; the viewmodel lives in plain view space
+        if (orientation != null) {
+            // world pass: rotate camera-relative world space back into view space, so the model sits in front of the eyes
+            matrices.multiply(orientation);
+            if (undoBob != null) matrices.multiplyPositionMatrix(undoBob);
+            if (fovScale != 1f) matrices.scale(fovScale, fovScale, 1f);
+        } else if (!"keep".equals(System.getenv("CSHUDCRAFT_VMPOSE"))) {
+            // hand pass (legacy): we are handed the inverse camera rotation; the viewmodel lives in plain view space
             matrices.peek().getPositionMatrix().identity();
             matrices.peek().getNormalMatrix().identity();
         }
@@ -140,7 +198,10 @@ public final class ViewModelRenderer {
         for (Map.Entry<Integer, List<float[]>> e : byTexture.entrySet()) {
             int skin = e.getKey();
             boolean additive = (m.textures.get(skin).flags() & MdlModel.NF_ADDITIVE) != 0;
-            RenderLayer layer = additive ? RenderLayers.eyes(l.textures()[skin]) : RenderLayers.entityCutoutNoCull(l.textures()[skin]);
+            Identifier texId = l.textures()[skin];
+            RenderLayer layer = LAYER_MODE.equals("eyes") ? RenderLayers.eyes(texId)
+                    : LAYER_MODE.equals("emissive") ? RenderLayers.entityTranslucentEmissive(texId)
+                    : additive ? RenderLayers.eyes(texId) : RenderLayers.entityCutoutNoCull(texId);
             List<float[]> chunks = e.getValue();
             queue.submitCustom(matrices, layer, (entry, vc) -> {
                 // entity layers draw quads: each triangle goes out as a quad with its last corner repeated
@@ -161,17 +222,23 @@ public final class ViewModelRenderer {
                 CsHudCraft.LOG.info("[CSHudCraft] vm debug: textures={} chunks={} light={} pose={}", l.textures().length,
                         byTexture.values().stream().mapToInt(List::size).sum(), light, matrices.peek().getPositionMatrix());
             }
-            queue.submitCustom(matrices, RenderLayers.entityCutoutNoCull(l.textures()[0]), (entry, vc) -> {
-                float h = 0.2f, z = -1f;
-                vc.vertex(entry, -h, -h, z).color(255, 0, 0, 255).texture(0, 1).overlay(OverlayTexture.DEFAULT_UV).light(0xF000F0).normal(entry, 0, 0, 1);
-                vc.vertex(entry, h, -h, z).color(255, 0, 0, 255).texture(1, 1).overlay(OverlayTexture.DEFAULT_UV).light(0xF000F0).normal(entry, 0, 0, 1);
-                vc.vertex(entry, h, h, z).color(255, 0, 0, 255).texture(1, 0).overlay(OverlayTexture.DEFAULT_UV).light(0xF000F0).normal(entry, 0, 0, 1);
-                vc.vertex(entry, -h, h, z).color(255, 0, 0, 255).texture(0, 0).overlay(OverlayTexture.DEFAULT_UV).light(0xF000F0).normal(entry, 0, 0, 1);
-            });
+            Identifier t0 = l.textures()[0];
+            debugQuad(queue, matrices, RenderLayers.entityCutoutNoCull(t0), -0.5f, 255, 0, 0); // red   = entityCutoutNoCull
+            debugQuad(queue, matrices, RenderLayers.eyes(t0), 0f, 0, 255, 0);                   // green = eyes
+            debugQuad(queue, matrices, RenderLayers.entityTranslucentEmissive(t0), 0.5f, 0, 0, 255); // blue = entityTranslucentEmissive
         }
         matrices.pop();
         framesDrawn++;
-        return true;
+    }
+
+    private static void debugQuad(OrderedRenderCommandQueue queue, MatrixStack matrices, RenderLayer layer, float cx, int r, int g, int b) {
+        queue.submitCustom(matrices, layer, (entry, vc) -> {
+            float h = 0.15f, z = -1f;
+            vc.vertex(entry, cx - h, -h, z).color(r, g, b, 255).texture(0, 1).overlay(OverlayTexture.DEFAULT_UV).light(0xF000F0).normal(entry, 0, 0, 1);
+            vc.vertex(entry, cx + h, -h, z).color(r, g, b, 255).texture(1, 1).overlay(OverlayTexture.DEFAULT_UV).light(0xF000F0).normal(entry, 0, 0, 1);
+            vc.vertex(entry, cx + h, h, z).color(r, g, b, 255).texture(1, 0).overlay(OverlayTexture.DEFAULT_UV).light(0xF000F0).normal(entry, 0, 0, 1);
+            vc.vertex(entry, cx - h, h, z).color(r, g, b, 255).texture(0, 0).overlay(OverlayTexture.DEFAULT_UV).light(0xF000F0).normal(entry, 0, 0, 1);
+        });
     }
 
     private static void muzzleFlash(MatrixStack matrices, OrderedRenderCommandQueue queue, MdlModel m, float[][] bones) {

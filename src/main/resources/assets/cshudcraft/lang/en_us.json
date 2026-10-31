@@ -1,6 +1,10 @@
 {
   "key.category.cshudcraft.main": "Counter-Strike 1.6",
   "key.cshudcraft.toggle": "Switch CS 1.6 / Minecraft interface",
+  "key.cshudcraft.use_block": "Use (doors, chests)",
+  "key.cshudcraft.scope_sens_up": "Scope sensitivity up",
+  "key.cshudcraft.scope_sens_down": "Scope sensitivity down",
+  "cshudcraft.scope.sens": "Scope sensitivity: %s%%",
   "key.cshudcraft.reload": "Reload",
   "key.cshudcraft.inspect_weapon": "Inspect weapon",
   "key.cshudcraft.flashlight": "Flashlight",

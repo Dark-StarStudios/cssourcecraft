@@ -1,6 +1,10 @@
 {
   "key.category.cshudcraft.main": "Counter-Strike 1.6",
   "key.cshudcraft.toggle": "Переключить интерфейс CS 1.6 / Minecraft",
+  "key.cshudcraft.use_block": "Использовать (двери, сундуки)",
+  "key.cshudcraft.scope_sens_up": "Чувствительность в скопе: больше",
+  "key.cshudcraft.scope_sens_down": "Чувствительность в скопе: меньше",
+  "cshudcraft.scope.sens": "Чувствительность в скопе: %s%%",
   "key.cshudcraft.reload": "Перезарядка",
   "key.cshudcraft.inspect_weapon": "Осмотр оружия",
   "key.cshudcraft.flashlight": "Фонарик",

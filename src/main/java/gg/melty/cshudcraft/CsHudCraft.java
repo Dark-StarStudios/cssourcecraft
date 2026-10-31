@@ -48,7 +48,7 @@ public class CsHudCraft implements ClientModInitializer {
 
     // sheets/controls.json
     private static final KeyBinding.Category CATEGORY = KeyBinding.Category.create(Identifier.of(MOD_ID, "main"));
-    public static KeyBinding TOGGLE, RELOAD, INSPECT, FLASHLIGHT, BUY, AMMO_PRIMARY, AMMO_SECONDARY, HAND;
+    public static KeyBinding TOGGLE, RELOAD, INSPECT, FLASHLIGHT, BUY, AMMO_PRIMARY, AMMO_SECONDARY, HAND, USE_BLOCK, SCOPE_SENS_UP, SCOPE_SENS_DOWN;
 
     private static boolean enabled = true;
     private static int csFrames;
@@ -80,6 +80,9 @@ public class CsHudCraft implements ClientModInitializer {
         AMMO_PRIMARY = key("ammo_primary", GLFW.GLFW_KEY_COMMA);
         AMMO_SECONDARY = key("ammo_secondary", GLFW.GLFW_KEY_PERIOD);
         HAND = key("hand", GLFW.GLFW_KEY_H);
+        USE_BLOCK = key("use_block", GLFW.GLFW_KEY_V); // doors, chests, buttons in CS mode (RMB belongs to the weapons)
+        SCOPE_SENS_UP = key("scope_sens_up", GLFW.GLFW_KEY_RIGHT_BRACKET);
+        SCOPE_SENS_DOWN = key("scope_sens_down", GLFW.GLFW_KEY_LEFT_BRACKET);
 
         ClientLifecycleEvents.CLIENT_STARTED.register(client -> loadAssets());
         // Minecraft's own HUD parts are skipped while the CS HUD is up (sheets/systems.json "vanilla_hidden")

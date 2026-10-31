@@ -44,6 +44,11 @@ public final class CsConfig {
     public String csDir() { return props.getProperty("cs_dir", "").trim(); }
     public boolean enabled() { return !"false".equalsIgnoreCase(props.getProperty("enabled", "true")); }
     public void setEnabled(boolean on) { props.setProperty("enabled", Boolean.toString(on)); save(); }
+    /** Mouse speed multiplier while zoomed (on top of CS's fov scaling). [ and ] change it in 10% steps. */
+    public double scopeSens() {
+        try { return Double.parseDouble(props.getProperty("scope_sens", "1.0")); } catch (Exception e) { return 1.0; }
+    }
+    public void setScopeSens(double v) { props.setProperty("scope_sens", Double.toString(v)); save(); }
     /** CS cl_righthand 0: weapon in the left hand. Every start is right-handed; H switches for this session only. */
     private boolean leftHand;
     public boolean leftHanded() { return leftHand; }

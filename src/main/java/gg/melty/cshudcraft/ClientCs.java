@@ -7,10 +7,13 @@ import net.minecraft.client.network.ClientPlayerEntity;
 import net.minecraft.client.util.math.MatrixStack;
 import net.minecraft.entity.LivingEntity;
 import net.minecraft.entity.projectile.ProjectileUtil;
+import net.minecraft.item.BlockItem;
 import net.minecraft.particle.DustParticleEffect;
 import net.minecraft.particle.ParticleTypes;
 import net.minecraft.text.Text;
+import net.minecraft.util.ActionResult;
 import net.minecraft.util.Formatting;
+import net.minecraft.util.Hand;
 import net.minecraft.util.hit.BlockHitResult;
 import net.minecraft.util.hit.EntityHitResult;
 import net.minecraft.util.hit.HitResult;
@@ -95,6 +98,46 @@ public final class ClientCs {
         if (first || animModel == null || !animModel.equals(modelFor(local))) deploy(false);
     }
 
+    private static void adjustScopeSens(ClientPlayerEntity p, double delta) {
+        double v = MathHelper.clamp(Math.round((CsHudCraft.CONFIG.scopeSens() + delta) * 10) / 10.0, 0.1, 3.0);
+        CsHudCraft.CONFIG.setScopeSens(v);
+        p.sendMessage(Text.translatable("cshudcraft.scope.sens", String.valueOf(Math.round(v * 100))), true);
+    }
+
+    /** Mouse speed factor while zoomed: CS scales it by the fov ratio, times the player's own scope sensitivity. */
+    public static double scopeLookScale(Object self) {
+        MinecraftClient mc = MinecraftClient.getInstance();
+        if (self != mc.player) return 1;
+        float z = zoomFov();
+        if (z <= 0) return 1;
+        double base = Math.tan(Math.toRadians(z) / 2) / Math.tan(Math.toRadians(mc.options.getFov().getValue()) / 2);
+        return MathHelper.clamp(base, 0.05, 1.0) * CsHudCraft.CONFIG.scopeSens();
+    }
+
+    /** CS "use": opens doors, trapdoors, gates, chests, flips levers and buttons. Right click belongs to the weapons here. */
+    private static void useBlock(MinecraftClient mc, ClientPlayerEntity p) {
+        if (mc.currentScreen != null || mc.interactionManager == null) return;
+        if (!(mc.crosshairTarget instanceof BlockHitResult hit) || hit.getType() != HitResult.Type.BLOCK) return;
+        // Minecraft runs a block's own use (doors, chests...) for the main hand only. So the click goes out with the main
+        // hand, but from an empty hotbar slot, so that a held block or tool cannot be placed or used by accident.
+        var inv = p.getInventory();
+        int cur = inv.getSelectedSlot();
+        int empty = -1;
+        if (!p.getMainHandStack().isEmpty()) {
+            for (int i = 0; i < 9; i++) {
+                if (inv.getStack(i).isEmpty()) { empty = i; break; }
+            }
+            if (empty < 0 && p.getMainHandStack().getItem() instanceof BlockItem) return; // nothing safe to click with
+        }
+        if (empty >= 0) inv.setSelectedSlot(empty);
+        try {
+            ActionResult r = mc.interactionManager.interactBlock(p, Hand.MAIN_HAND, hit);
+            if (r.isAccepted()) p.swingHand(Hand.MAIN_HAND);
+        } finally {
+            if (empty >= 0) inv.setSelectedSlot(cur);
+        }
+    }
+
     static void send(String action, String arg, float... nums) {
         List<Float> l = new ArrayList<>(nums.length);
         for (float f : nums) l.add(f);
@@ -138,6 +181,9 @@ public final class ClientCs {
         while (CsHudCraft.BUY.wasPressed()) mc.setScreen(new BuyScreen());
         while (CsHudCraft.AMMO_PRIMARY.wasPressed()) send("buy", "ammo_primary");
         while (CsHudCraft.AMMO_SECONDARY.wasPressed()) send("buy", "ammo_secondary");
+        while (CsHudCraft.USE_BLOCK.wasPressed()) useBlock(mc, p);
+        while (CsHudCraft.SCOPE_SENS_UP.wasPressed()) adjustScopeSens(p, 0.1);
+        while (CsHudCraft.SCOPE_SENS_DOWN.wasPressed()) adjustScopeSens(p, -0.1);
 
         if (rezoomAt > 0 && now >= rezoomAt) {
             rezoomAt = 0;
